@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"math"
 	"os"
+	"unicode/utf8"
 )
 
 type Header struct {
@@ -54,6 +55,67 @@ func main() {
 		return
 	}
 
+	glyphmap := make([][]rune, header.NumberOfGlyphs)
+
+	if header.Flags == 0x1 {
+		f.Seek(int64(header.HeaderSize)+(int64(header.BytesPerGlyph)*int64(header.NumberOfGlyphs)), 0)
+		for i := uint32(0); i < header.NumberOfGlyphs; i++ {
+			runelist := glyphmap[i]
+
+			bytes := make([]byte, 0)
+			b := make([]byte, 1)
+			for true {
+				count, err := f.Read(b)
+				if b[0] == 0xFF {
+					break
+				}
+				if err != nil {
+					fmt.Printf("Failed to read glyth table: %v", err)
+					return
+				}
+				if count == 0 {
+					fmt.Printf("Data undeflow reading glyph table")
+					return
+				}
+				bytes = append(bytes, b[0])
+			}
+
+			for len(bytes) > 0 {
+				rune, size := utf8.DecodeRune(bytes)
+				if rune == utf8.RuneError {
+					fmt.Printf("Failed to decode UTF8 rune in table (%d): %v", size, bytes)
+					return
+				}
+				runelist = append(runelist, rune)
+				bytes = bytes[size:]
+			}
+
+			glyphmap[i] = runelist
+		}
+	} else {
+		for i := uint32(0); i < header.NumberOfGlyphs; i++ {
+			runelist := make([]rune, 1)
+			runelist[0] = rune(i)
+			glyphmap[i] = runelist
+		}
+	}
+
+	for i := uint32(0); i < header.NumberOfGlyphs; i++ {
+		runelist := glyphmap[i]
+		if len(runelist) == 0 {
+			continue
+		}
+		fmt.Printf("0x%03x: ", i)
+		for j := 0; j < len(runelist); j++ {
+			fmt.Printf("%c ", runelist[j])
+		}
+		fmt.Printf("\n")
+
+	}
+
+	// go to start of glyph data in case we read the mapping table
+	f.Seek(int64(header.HeaderSize), 0)
+
 	image_width := int(1 + ((header.Width + 1) * 16))
 	image_height := int(1 + ((header.Height + 1) * uint32(math.Ceil(float64(header.NumberOfGlyphs)/16.0))))
 
@@ -66,9 +128,15 @@ func main() {
 		}
 	}
 
-	background = color.RGBA{0xF0, 0xF0, 0xF0, 0xFF}
 	foreground := color.RGBA{0x10, 0x10, 0x10, 0xFF}
 	for i := uint32(0); i < header.NumberOfGlyphs; i++ {
+
+		glyphs := glyphmap[i]
+		if len(glyphs) == 0 {
+			background = color.RGBA{0xF0, 0xC0, 0xC0, 0xFF}
+		} else {
+			background = color.RGBA{0xF0, 0xF0, 0xF0, 0xFF}
+		}
 
 		bits := make([]byte, header.BytesPerGlyph)
 		count, err := f.Read(bits)
@@ -115,24 +183,4 @@ func main() {
 		return
 	}
 
-	if header.Flags == 0x1 {
-		f.Seek(int64(header.HeaderSize)+(int64(header.BytesPerGlyph)*int64(header.NumberOfGlyphs)), 0)
-		for i := uint32(0); i < header.NumberOfGlyphs; i++ {
-			fmt.Printf("0x%03x: ", i)
-			b := make([]byte, 1)
-			for ok := true; ok; ok = b[0] != 0xFF {
-				count, err := f.Read(b)
-				if err != nil {
-					fmt.Printf("Failed to read glyth table: %v", err)
-					return
-				}
-				if count == 0 {
-					fmt.Printf("Data undeflow reading glyph table")
-					return
-				}
-				fmt.Printf("%02x ", b[0])
-			}
-			fmt.Printf("\n")
-		}
-	}
 }
